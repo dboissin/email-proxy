@@ -1,0 +1,44 @@
+apply from: "gradle/vertx.gradle"
+
+dependencies {
+	compile "fr.wseduc:processor:$processorVersion"
+    compile "fr.wseduc:web-utils:$webUtilsVersion"
+}
+
+javadoc {
+  options.encoding = 'UTF-8'
+  classpath = configurations.provided
+  classpath += configurations.compile
+}
+
+repositories {
+    maven {
+        url "http://maven.web-education.net/nexus/content/groups/public"
+    }
+}
+
+def configurePom(def pom) {
+	pom.project {
+		description 'Email proxy'
+		inceptionYear '2014'
+		packaging 'zip'
+		url 'https://github.com/dboissin/email-proxy'
+
+		developers {
+			developer {
+				id 'dboissin'
+				name 'Damien BOISSIN'
+				email 'damien.boissin@gmail.com'
+			}
+		}
+
+		scm {
+			url 'https://github.com/dboissin/email-proxy.git'
+		}
+
+		properties {
+			setProperty('project.build.sourceEncoding', 'UTF8')
+		}
+	}
+}
+
