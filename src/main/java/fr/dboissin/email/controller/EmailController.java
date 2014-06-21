@@ -1,14 +1,19 @@
 package fr.dboissin.email.controller;
 
 import fr.dboissin.email.exception.ValidationException;
+import fr.dboissin.email.util.Recaptcha;
 import fr.wseduc.rs.Post;
 import fr.wseduc.webutils.http.BaseController;
 import fr.wseduc.webutils.request.RequestUtils;
+import fr.wseduc.webutils.security.SecuredAction;
 import org.vertx.java.core.Handler;
+import org.vertx.java.core.Vertx;
 import org.vertx.java.core.eventbus.Message;
 import org.vertx.java.core.http.HttpServerRequest;
+import org.vertx.java.core.http.RouteMatcher;
 import org.vertx.java.core.json.JsonArray;
 import org.vertx.java.core.json.JsonObject;
+import org.vertx.java.platform.Container;
 
 import java.io.UnsupportedEncodingException;
 import java.util.HashSet;
@@ -16,6 +21,14 @@ import java.util.Map;
 import java.util.Set;
 
 public final class EmailController extends BaseController {
+
+	private Recaptcha recaptcha;
+
+	@Override
+	public void init(Vertx vertx, Container container, RouteMatcher rm, Map<String, SecuredAction> securedActions) {
+		super.init(vertx, container, rm, securedActions);
+		recaptcha = new Recaptcha(vertx, container.config().getBoolean("ssl", false));
+	}
 
 	@Post("")
 	public void proxyEmail(final HttpServerRequest request) {
@@ -39,39 +52,76 @@ public final class EmailController extends BaseController {
 		}
 		RequestUtils.bodyToJson(request, new Handler<JsonObject>() {
 			@Override
-			public void handle(JsonObject object) {
-				try {
-					validate(object, hostConfig);
-				} catch (ValidationException e) {
-					if (log.isDebugEnabled()) {
-						log.debug("Validation error in object " + object.encode(), e);
-					}
-					badRequest(request, e.getMessage());
-					return;
-				}
-				send(
-						request,
-						object.getString("from", hostConfig.getString("from")),
-						object.getArray("to", hostConfig.getArray("to")),
-						object.getArray("cc", hostConfig.getArray("cc")),
-						object.getArray("bcc", hostConfig.getArray("bcc")),
-						object.getString("subject", hostConfig.getString("subject")),
-						object,
-						object.getString("template", hostConfig.getString("template")),
-						new Handler<Message<JsonObject>>() {
-							@Override
-							public void handle(Message<JsonObject> message) {
-								if (message == null) {
-									renderError(request);
-								} else if ("ok".equals(message.body().getString("status"))) {
-									renderJson(request, new JsonObject());
-								} else {
-									renderError(request, message.body());
-								}
+			public void handle(final JsonObject object) {
+				String recaptchaPrivateKey = hostConfig.getString("recaptcha-private-key");
+				if (recaptchaPrivateKey != null) {
+					verifyCaptcha(request, recaptchaPrivateKey, object, new Handler<Boolean>() {
+						@Override
+						public void handle(Boolean isValid) {
+							if (Boolean.TRUE.equals(isValid)) {
+								validateAndSend(object, hostConfig, request);
+							} else {
+								badRequest(request, "invalid.captcha");
 							}
-						});
+						}
+					});
+				} else {
+					validateAndSend(object, hostConfig, request);
+				}
 			}
 		});
+	}
+
+	private void verifyCaptcha(HttpServerRequest request, String privateKey, JsonObject object,
+			final Handler<Boolean> handler) {
+		String remoteIp = request.headers().get("X-Real-IP");
+		if (remoteIp == null) {
+			remoteIp = request.headers().get("X-Forwarded-For");
+			if (remoteIp == null) {
+				remoteIp = request.remoteAddress().getHostName();
+			}
+		}
+		if (log.isDebugEnabled()) {
+			log.debug("Remote ip : " + remoteIp);
+		}
+		recaptcha.verify(privateKey, remoteIp,
+				object.getString("recaptcha_challenge_field"),
+				object.getString("recaptcha_response_field"),
+				handler);
+	}
+
+	private void validateAndSend(JsonObject object, JsonObject hostConfig, final HttpServerRequest request) {
+		try {
+			validate(object, hostConfig);
+		} catch (ValidationException e) {
+			if (log.isDebugEnabled()) {
+				log.debug("Validation error in object " + object.encode(), e);
+			}
+			badRequest(request, e.getMessage());
+			return;
+		}
+		send(
+				request,
+				object.getString("from", hostConfig.getString("from")),
+				object.getArray("to", hostConfig.getArray("to")),
+				object.getArray("cc", hostConfig.getArray("cc")),
+				object.getArray("bcc", hostConfig.getArray("bcc")),
+				object.getString("subject", hostConfig.getString("subject")),
+				object,
+				object.getString("template", hostConfig.getString("template")),
+				new Handler<Message<JsonObject>>() {
+					@Override
+					public void handle(Message<JsonObject> message) {
+						if (message == null) {
+							renderError(request);
+						} else if ("ok".equals(message.body().getString("status"))) {
+							renderJson(request, new JsonObject());
+						} else {
+							renderError(request, message.body());
+						}
+					}
+				}
+		);
 	}
 
 	private void validate(JsonObject object, JsonObject hostConfig) throws ValidationException {

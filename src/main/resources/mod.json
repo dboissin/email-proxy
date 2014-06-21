@@ -17,7 +17,8 @@
 				"message" : "^(?=\\s*\\S).*$"
 			},
 			"required" : ["email","message"],
-			"allowed-referer" : ["http://hsmartphone/contact.html"]
+			"allowed-referer" : ["http://hsmartphone/contact.html"],
+			"recaptcha-private-key" : "your-private-key"
 		}
 	},
 	"modules": [
